@@ -1,0 +1,41 @@
+---
+title: "Data exploration: Rubenstein et al. 2023"
+format: html
+---
+
+# Summary
+
+Read in the various .csv files to see what they contain and how they relate to one another
+
+# Data sources
+
+* Rubenstein et al. (2023). Climate change and the global redistribution of biodiversity: Substantial variation in empirical support for expected range shifts. Environmental Evidence, 12(1), 7. https://doi.org/10.1186/s13750-023-00296-0
+* CoRE (Contractions or Range Expansions) Database: Global Database of Species Range Shifts from 1802-2019: Data downloaded from https://www.sciencebase.gov/catalog/item/64147d6fd34eb496d1ceb497
+
+# Methods
+
+```{r}
+library(tidyverse)
+library(here)
+```
+
+## Read in .csvs individually
+
+### Climate variables
+
+```{r}
+climate_df <- read_csv(here('Global Database of Species Range Shifts from 1802-2019', 'Climate.Variables.csv'))
+head(climate_df)
+```
+
+```{r}
+paperid_df <- read_csv(here('Global Database of Species Range Shifts from 1802-2019', 'PaperID.csv'))
+names(paperid_df)
+head(paperid_df)
+```
+
+```{r}
+rshifts_df <- read_csv(here('Global Database of Species Range Shifts from 1802-2019', 'Range.Shifts.csv'))
+names(rshifts_df)
+```
+

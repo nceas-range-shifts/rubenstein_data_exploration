@@ -1,0 +1,11 @@
+.Rproj.user
+.Rhistory
+.Rdata
+.httr-oauth
+.DS_Store
+.quarto
+
+### include .zip files but exclude the resulting folders;
+### each user can expand the zips locally
+studyarea_shapefiles/*
+Global*Database*of*Species*Range*Shifts*from*1802-2019/*

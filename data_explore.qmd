@@ -1,6 +1,11 @@
 ---
 title: "Data exploration: Rubenstein et al. 2023"
-format: html
+format: 
+  html:
+    embed-resources: true
+execute:
+  message: false
+  warning: false
 ---
 
 # Summary
@@ -14,28 +19,140 @@ Read in the various .csv files to see what they contain and how they relate to o
 
 # Methods
 
-```{r}
+```{r setup}
 library(tidyverse)
 library(here)
+library(DBI)
+
+library(sf)
 ```
+
+## Set up data folders
+
+See README.md for details on extraction into proper destination directories.
 
 ## Read in .csvs individually
 
+Use `janitor::clean_names()` to standardize variable names to `snake_case`.
+
 ### Climate variables
 
-```{r}
-climate_df <- read_csv(here('Global Database of Species Range Shifts from 1802-2019', 'Climate.Variables.csv'))
-head(climate_df)
+These associate a `reference_number` to each climate `variable_description`.  The dataframe is 106 observations across the two variables.  The `reference_number` prefix (`A`, `B`, `C`) break down into (roughly) terrestrial temperature-related variables (`A1 - A49`), marine temperature-related variables (`B1 - B28`), and precipitation-related variables (`C1 - C30`).
+
+```{r read climate}
+climate_df <- read_csv(here('_raw_data/db_range_shifts', 'Climate.Variables.csv')) %>%
+  janitor::clean_names()
+DT::datatable(climate_df)
 ```
 
-```{r}
-paperid_df <- read_csv(here('Global Database of Species Range Shifts from 1802-2019', 'PaperID.csv'))
-names(paperid_df)
+### Paper details
+
+These associate a `paperid` with variables about each paper: `author`, `title`, `year`, `journal`, `doi`.  The dataframe is 315 observations across the six variables.
+
+```{r read paperid}
+paperid_df <- read_csv(here('_raw_data/db_range_shifts', 'PaperID.csv')) %>%
+  janitor::clean_names()
 head(paperid_df)
 ```
 
+### Range shift details
+
+This dataframe has a `paperid` column that corresponds to the `paperid` column in the paper details dataframe.
+```{r read rangeshifts}
+rshifts_df <- read_csv(here('_raw_data/db_range_shifts', 'Range.Shifts.csv')) %>%
+  janitor::clean_names()
+# names(rshifts_df)
+# x <- inner_join(rshifts_df, paperid_df, by = 'paperid')
+# nrow(x) == nrow(rshifts_df) 
+### TRUE - all rshifts_df rows are accounted for
+hist(rshifts_df$paperid)
+
+rshifts_df$temp %>% table()
+```
+
+The `temp` column seems to contain codes related to `climate_df$reference_number` for both `A` and `B`, with multiple values in some rows separated by commas (e.g., `B9, B1`).  Similar for the `precip` column for codes `C`.  These are then associated with notes about Additional details on species name/taxonomic information, hemisphere, CASC.
+
+### Species per paper
+
+Most papers contain information on multiple species.
+
 ```{r}
-rshifts_df <- read_csv(here('Global Database of Species Range Shifts from 1802-2019', 'Range.Shifts.csv'))
-names(rshifts_df)
+spp_per_paper <- rshifts_df %>%
+  group_by(paperid) %>%
+  summarize(nspp = n_distinct(species))
+
+hist(log10(spp_per_paper$nspp))
+```
+
+### Distinct species included
+
+Separate out species taxonomic info from the climate and shift info using `species` as key.  Note, common name `cname` is highly variable and not 1:1 match to `species` in either direction, so leave intact with the climate info.
+
+```{r isolate species and taxonomic info from range shifts}
+distinct_spp <- rshifts_df %>%
+  select(sciname, tax,
+         kingdom, phylum, class, order, family, genus, species, k2, t2) %>%
+  distinct() %>%
+  ### one spp name with two taxa - it is arachnid ("other"), NOT insect
+  filter(!(tax == 'insect' & species == 'Ixodes ricinus'))
+
+# spp_comname <- rshifts_df %>%
+#   select(species, cname) %>%
+#   mutate(cname = str_to_sentence(cname)) %>%
+#   filter(!is.na(cname) & cname != 'N/a') %>%
+#   distinct()
+# x <- spp_comname %>% group_by(species) %>% filter(n() > 1)
+
+rshifts_bare <- rshifts_df %>%
+  select(-tax, -kingdom, -phylum, -class, -order, -family, -genus, -species, -k2, -t2)
+
+# rshifts_df$sciname %>% n_distinct()
+```
+
+Seems there are 13098 distinct `species` but there are inconsistencies in common name (typos, punctuation, capitalization) and some subspecies/subpops.  Can taxonomic info be pulled out into a separate relational table to reduce redundancy?
+
+## Put tables in a SQL database?
+
+The range shifts data still contains a ton of information in all those columns; but if there is a lot of redundancy it might make sense to put into separate related tables.
+
+```{r encode into sql}
+db_file <- here('_raw_data/db_range_shifts.sqlite')
+
+if(file.exists(db_file)) unlink(db_file)
+
+mydb <- dbConnect(RSQLite::SQLite(), db_file)
+dbWriteTable(mydb, 'paper_id', paperid_df)
+dbWriteTable(mydb, 'climate_variables', climate_df)
+dbWriteTable(mydb, 'tax_names', distinct_spp)
+dbWriteTable(mydb, 'range_shifts', rshifts_bare)
+
+dbDisconnect(mydb)
+```
+
+* Pre-SQL: 38 MB across three csv
+* Post-SQL: 34.8 MB in a single database with four tables.  
+
+To retrieve:
+
+```{r retrieve from sql}
+mydb <- dbConnect(RSQLite::SQLite(), db_file)
+dbListTables(mydb)
+
+rshifts_bare2 <- dbGetQuery(mydb, 'SELECT * from range_shifts')
+dbDisconnect(mydb)
+```
+
+
+## Read in shapefiles
+
+```{r read shapefiles}
+studyarea_sf <- read_sf(here('_raw_data/studyarea_shapefiles',
+                             'studyarea.shapefiles.shp')) %>%
+  janitor::clean_names()
+
+names(studyarea_sf)
+
+ggplot(data = studyarea_sf) +
+  geom_sf(aes(color = paperid, fill = quality), alpha = .3)
 ```
 

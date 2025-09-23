@@ -7,5 +7,5 @@
 
 ### include .zip files but exclude the resulting folders;
 ### each user can expand the zips locally
-studyarea_shapefiles/*
-Global*Database*of*Species*Range*Shifts*from*1802-2019/*
+_raw_data/studyarea_shapefiles/*
+_raw_data/db_range_shifts/*

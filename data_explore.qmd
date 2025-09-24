@@ -10,7 +10,7 @@ execute:
 
 # Summary
 
-Read in the various .csv files to see what they contain and how they relate to one another
+Read in the various data files to see what they contain and how they relate to one another
 
 # Data sources
 
@@ -37,11 +37,12 @@ Use `janitor::clean_names()` to standardize variable names to `snake_case`.
 
 ### Climate variables
 
-These associate a `reference_number` to each climate `variable_description`.  The dataframe is 106 observations across the two variables.  The `reference_number` prefix (`A`, `B`, `C`) break down into (roughly) terrestrial temperature-related variables (`A1 - A49`), marine temperature-related variables (`B1 - B28`), and precipitation-related variables (`C1 - C30`).
+These associate a `reference_number` to each climate `variable_description`.  The dataframe is 106 observations across the two variables.  The `reference_number` prefix (`A`, `B`, `C`) break down into (roughly) terrestrial temperature-related variables (`A1 - A49`), marine temperature-related variables (`B1 - B28`), and precipitation-related variables (`C1 - C30`).  THe name `reference_number` is vague; let's rename to `climate_code`.
 
 ```{r read climate}
 climate_df <- read_csv(here('_raw_data/db_range_shifts', 'Climate.Variables.csv')) %>%
-  janitor::clean_names()
+  janitor::clean_names() %>%
+  rename(climate_code = reference_number)
 DT::datatable(climate_df)
 ```
 
@@ -59,18 +60,78 @@ head(paperid_df)
 
 This dataframe has a `paperid` column that corresponds to the `paperid` column in the paper details dataframe.
 ```{r read rangeshifts}
-rshifts_df <- read_csv(here('_raw_data/db_range_shifts', 'Range.Shifts.csv')) %>%
+rshifts_df_raw <- read_csv(here('_raw_data/db_range_shifts', 'Range.Shifts.csv')) %>%
   janitor::clean_names()
 # names(rshifts_df)
 # x <- inner_join(rshifts_df, paperid_df, by = 'paperid')
 # nrow(x) == nrow(rshifts_df) 
 ### TRUE - all rshifts_df rows are accounted for
-hist(rshifts_df$paperid)
+hist(rshifts_df_raw$paperid)
 
-rshifts_df$temp %>% table()
+rshifts_df_raw$temp %>% table()
 ```
 
 The `temp` column seems to contain codes related to `climate_df$reference_number` for both `A` and `B`, with multiple values in some rows separated by commas (e.g., `B9, B1`).  Similar for the `precip` column for codes `C`.  These are then associated with notes about Additional details on species name/taxonomic information, hemisphere, CASC.
+
+## Split out range shifts dataframe
+
+The range shifts dataframe contains a lot of repeated information that could better fit into relational tables.  Identify redundant info and split out.
+
+### Convert `speriod` to integer
+
+The `speriod` variable is generally in `P#` format; the `P` doesn't really carry any info but coerces the column into character instead of integer, which takes a lot more space.
+
+```{r}
+rshifts_df_raw$speriod %>% table() ### some bare numbers, mostly P# format
+# x <- rshifts_df_raw %>%
+#   group_by(paperid, polygon_name, ecotype) %>%
+#   filter(any(!str_detect(speriod, 'P')))
+### the bare numbers are all associated with one polygon/paper - data entry mistake?
+
+rshifts_df <- rshifts_df_raw %>%
+  mutate(speriod = str_extract(speriod, '[0-9]+') %>% as.integer())
+  
+```
+
+### Convert columns with few values into key-value pairs?
+
+Certain columns contain many iterations of just a few values.  For those columns that are not likely to be critical to the analysis, we could convert those to key-value pairs, keeping an integer value in the main dataframe and storing the key in a separate dataframe for reference if needed.  However, after trying it out, it only saved a little space; these variables are all separated out into a species/polygon specific dataframe that is much smaller than the raw range shifts dataframe, so the savings are reduced.
+
+* `ecotype` contains just three values: aquatic, marine, and terrestrial
+* `sample` is regular or irregular
+* `hem`(isphere) is southern, northern, or both
+* `grain` is coarse, fine, medium
+* `resurvey` is opportunistic or resurveyed
+* `raw` is modeled or raw
+
+```{r}
+# x <- rshifts_df %>%
+#   summarize(across(everything(), ~ n_distinct(.x)))
+# key_value_vars <- c('ecotype', 'sample', 'hem', 'grain', 'resurvey', 'raw')
+# 
+# ### convert those columns into factors:
+# rshifts_df <- rshifts_df %>%
+#   mutate(across(key_value_vars, factor))
+# 
+# ### let's just get all combos in one df
+# create_key_value <- function(fct, name) {
+#   df <- data.frame(value = levels(fct)) %>%
+#     mutate(key = 1:n()) %>%
+#     setNames(c(paste0(name, '_desc'), name))
+# }
+# ecotype_kv_df <- create_key_value(rshifts_df$ecotype, 'ecotype')
+# hem_kv_df <- create_key_value(rshifts_df$hem, 'hem')
+# sample_kv_df <- create_key_value(rshifts_df$sample, 'sample')
+# grain_kv_df <- create_key_value(rshifts_df$grain, 'grain')
+# resurvey_kv_df <- create_key_value(rshifts_df$resurvey, 'resurvey')
+# raw_kv_df <- create_key_value(rshifts_df$raw, 'raw')
+
+### now convert those factor columns into integers:
+# rshifts_df <- rshifts_df %>%
+#   mutate(across(key_value_vars, as.integer))
+```
+
+NOTE: in retrospect, this only saved less than a MB, for considerably more effort on the other end...
 
 ### Species per paper
 
@@ -84,17 +145,81 @@ spp_per_paper <- rshifts_df %>%
 hist(log10(spp_per_paper$nspp))
 ```
 
+### Polygons per paper
+
+Each of 315 papers has one or more polygons associated with it; it appears that each of 463 polygons is associated with exactly one paper, and the polygon name is perhaps prefixed with that paper ID (extra redundancy...).
+
+```{r polygons per paper}
+polys_per_paper <- rshifts_df %>%
+  select(paperid, polygon_name) %>%
+  distinct() %>%
+  mutate(check_id = str_extract(polygon_name, '^[0-9]+') %>% as.numeric()) %>%
+  mutate(checks_out = check_id == paperid)
+```
+
+```{r poly attributes per paper}
+poly_attrs_per_paper <- rshifts_df %>%
+  # select(paperid, polygon_name, speriod:habtype) %>%
+  distinct() %>%
+  group_by(paperid, polygon_name, speriod, ecotype) %>%
+  summarize(across(everything(), ~ n_distinct(.x)),
+            .groups = 'drop')
+
+single_attrs <- poly_attrs_per_paper %>%
+  pivot_longer(cols = c(-paperid, -polygon_name, -speriod, -ecotype), names_to = 'var', values_to = 'val') %>%
+  mutate(var = fct_inorder(var)) %>%
+  group_by(var) %>%
+  summarize(max_values = max(val), .groups = 'drop') %>%
+  filter(max_values == 1)
+
+polygon_vars <- as.character(single_attrs$var)
+```
+
+
+Each polygon has particular attributes; when considering `polygon_name`, `speriod` (sample period?), and `ecotype`, the above listed variables are all single-valued.  So a table of all these variables, separated from taxonomic information, will save a lot of redundancy.  Plus, we should be able to combine the precip and temp columns into a single column, expanding out multiple values, for matching with the climate variable table.
+
+```{r}
+polygon_keys <- c('paperid', 'polygon_name', 'speriod', 'ecotype')
+poly_attrs_df <- rshifts_df %>%
+  select(all_of(polygon_keys), all_of(polygon_vars)) %>%
+  distinct() %>%
+  ### gather the two climate columns into a single column and separate 
+  ### multiple entries into individual observations
+  pivot_longer(cols = c(temp, precip), names_to = 'climate_variable', values_to = 'climate_code') %>%
+  mutate(climate_code = str_split(climate_code, pattern = ', *')) %>%
+  unnest(climate_code) %>%
+  ### fix malformed entries
+  mutate(climate_code = str_remove_all(climate_code, ' ')) %>%
+  filter(!is.na(climate_code) & climate_code != '') %>%
+  mutate(climate_code = ifelse(climate_code == '19', 'C19', climate_code)) %>%
+  ### drop climate_variable, as redundant (info contained in climate_code)
+  select(-climate_variable) %>%
+  distinct() 
+```
+
+
 ### Distinct species included
 
-Separate out species taxonomic info from the climate and shift info using `species` as key.  Note, common name `cname` is highly variable and not 1:1 match to `species` in either direction, so leave intact with the climate info.
+Separate out species taxonomic info from the climate and shift info using `species` as key.  Note, common name `cname` is highly variable and not 1:1 match to `species` in either direction, so leave intact with the climate info.  Each species, in each polygon, is associated with one value for `casc` and one value for `data_source_title`, but multiple values for climate-related observations including `dim`, `obsvt`, etc.
 
 ```{r isolate species and taxonomic info from range shifts}
+tax_vars <- c('tax', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'k2', 't2')
+tax_keys <- c('sciname')
+
 distinct_spp <- rshifts_df %>%
-  select(sciname, tax,
-         kingdom, phylum, class, order, family, genus, species, k2, t2) %>%
+  select(all_of(tax_keys), all_of(tax_vars)) %>%
   distinct() %>%
   ### one spp name with two taxa - it is arachnid ("other"), NOT insect
   filter(!(tax == 'insect' & species == 'Ixodes ricinus'))
+
+spp_poly_df <- rshifts_df %>%
+  select(all_of(tax_keys), all_of(polygon_keys), casc, data_source_title) %>%
+  distinct()
+### check single values for casc and data_source_title:
+# x <- spp_poly_df %>% 
+#   group_by(sciname, polygon_name, speriod, ecotype) %>% 
+#   summarize(ncasc = n_distinct(casc), ndata = n_distinct(data_source_title)) %>%
+#   filter(ncasc > 1 | ndata > 1)
 
 # spp_comname <- rshifts_df %>%
 #   select(species, cname) %>%
@@ -103,15 +228,16 @@ distinct_spp <- rshifts_df %>%
 #   distinct()
 # x <- spp_comname %>% group_by(species) %>% filter(n() > 1)
 
-rshifts_bare <- rshifts_df %>%
-  select(-tax, -kingdom, -phylum, -class, -order, -family, -genus, -species, -k2, -t2)
+range_shifts_clean <- rshifts_df %>%
+  select(-all_of(tax_vars), -all_of(polygon_vars), -casc, -data_source_title) %>%
+  distinct()
 
-# rshifts_df$sciname %>% n_distinct()
+x <- range_shifts_clean %>%
+  group_by(sciname, polygon_name, speriod, ecotype) %>%
+  summarize(across(everything(), ~ n_distinct(.x)))
 ```
 
-Seems there are 13098 distinct `species` but there are inconsistencies in common name (typos, punctuation, capitalization) and some subspecies/subpops.  Can taxonomic info be pulled out into a separate relational table to reduce redundancy?
-
-## Put tables in a SQL database?
+## Put tables in a SQL database
 
 The range shifts data still contains a ton of information in all those columns; but if there is a lot of redundancy it might make sense to put into separate related tables.
 
@@ -124,13 +250,22 @@ mydb <- dbConnect(RSQLite::SQLite(), db_file)
 dbWriteTable(mydb, 'paper_id', paperid_df)
 dbWriteTable(mydb, 'climate_variables', climate_df)
 dbWriteTable(mydb, 'tax_names', distinct_spp)
-dbWriteTable(mydb, 'range_shifts', rshifts_bare)
+dbWriteTable(mydb, 'species_polygons', spp_poly_df)
+dbWriteTable(mydb, 'range_shifts', range_shifts_clean)
+
+### key value pairs:
+# dbWriteTable(mydb, 'ecotype', ecotype_kv_df)
+# dbWriteTable(mydb, 'hem', hem_kv_df)
+# dbWriteTable(mydb, 'sample', sample_kv_df)
+# dbWriteTable(mydb, 'grain', grain_kv_df)
+# dbWriteTable(mydb, 'resurvey', resurvey_kv_df)
+# dbWriteTable(mydb, 'raw', raw_kv_df)
 
 dbDisconnect(mydb)
 ```
 
 * Pre-SQL: 38 MB across three csv
-* Post-SQL: 34.8 MB in a single database with four tables.  
+* Post-SQL: 11 MB in a single database with four tables.  
 
 To retrieve:
 

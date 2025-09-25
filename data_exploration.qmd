@@ -1,0 +1,84 @@
+---
+title: "Data exploration: Rubenstein et al. 2023"
+format: 
+  html:
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+---
+
+# Summary
+
+Read in the database and examine the data
+
+# Data sources
+
+* Rubenstein et al. (2023). Climate change and the global redistribution of biodiversity: Substantial variation in empirical support for expected range shifts. Environmental Evidence, 12(1), 7. https://doi.org/10.1186/s13750-023-00296-0
+* CoRE (Contractions or Range Expansions) Database: Global Database of Species Range Shifts from 1802-2019: Data downloaded from https://www.sciencebase.gov/catalog/item/64147d6fd34eb496d1ceb497
+
+# Methods
+
+```{r setup}
+library(tidyverse)
+library(here)
+library(DBI)
+
+library(sf)
+```
+
+
+## Access SQL database
+
+Create the connection using `DBI::dbConnect()`
+
+```{r}
+db_file <- here('_raw_data/db_range_shifts.sqlite')
+mydb <- dbConnect(RSQLite::SQLite(), db_file)
+```
+
+```{sql}
+#| connection: mydb
+#| output.var: rshifts_df
+SELECT * FROM range_shifts as rs
+LEFT JOIN species_polygons as sp
+  USING (polygon_name, speriod, ecotype, sciname)
+LEFT JOIN polygon_attrs as pa
+  USING (polygon_name, speriod, ecotype)
+LEFT JOIN polygon_climate as pc
+  USING (polygon_name)
+LEFT JOIN climate_variables as cv
+  USING (climate_code)
+```
+
+```{r}
+dbDisconnect(mydb)
+```
+
+## Read in shapefiles
+
+```{r read shapefiles}
+studyarea_sf <- read_sf(here('_raw_data/studyarea_shapefiles',
+                             'studyarea.shapefiles.shp')) %>%
+  janitor::clean_names()
+
+names(studyarea_sf)
+
+ggplot(data = studyarea_sf) +
+  geom_sf(aes(color = paperid, fill = quality), alpha = .3)
+```
+
+## Examine patterns
+
+### categorical variables indicating type of shift
+
+```{r}
+rshifts_df$tsupport %>% table()
+rshifts_df$psupport %>% table()
+
+rshifts_df$dim %>% table() ### x <- rshifts_df %>% filter(dim == 'elevation')
+rshifts_df$obsvt %>% table()
+rshifts_df$param %>% table()
+rshifts_df$catchange %>% table()
+```
+

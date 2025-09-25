@@ -298,22 +298,12 @@ LEFT JOIN climate_variables as cv
 ```
 
 ```{r}
+dbDisconnect(mydb)
+
+
 check <- anti_join(join_test, df_from_sql, 
                    by = c('polygon_name', 'paperid', 'speriod', 'ecotype', 'sciname'))
 
 if(nrow(check) > 0) stop('The R join test and SQL join test do not match up!')
-```
-
-## Read in shapefiles
-
-```{r read shapefiles}
-studyarea_sf <- read_sf(here('_raw_data/studyarea_shapefiles',
-                             'studyarea.shapefiles.shp')) %>%
-  janitor::clean_names()
-
-names(studyarea_sf)
-
-ggplot(data = studyarea_sf) +
-  geom_sf(aes(color = paperid, fill = quality), alpha = .3)
 ```
 

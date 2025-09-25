@@ -281,6 +281,8 @@ Create the connection using `DBI::dbConnect()`
 ```{r}
 db_file <- here('_raw_data/db_range_shifts.sqlite')
 mydb <- dbConnect(RSQLite::SQLite(), db_file)
+
+DBI::dbListTables(mydb)
 ```
 
 ```{sql}

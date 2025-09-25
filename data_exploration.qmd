@@ -35,9 +35,15 @@ Create the connection using `DBI::dbConnect()`
 ```{r}
 db_file <- here('_raw_data/db_range_shifts.sqlite')
 mydb <- dbConnect(RSQLite::SQLite(), db_file)
+
+DBI::dbListTables(mydb)
 ```
 
-```{sql}
+### access via sql code chunk
+
+currently not working on mac...
+
+```{sql, eval = FALSE}
 #| connection: mydb
 #| output.var: rshifts_df
 SELECT * FROM range_shifts as rs
@@ -49,6 +55,25 @@ LEFT JOIN polygon_climate as pc
   USING (polygon_name)
 LEFT JOIN climate_variables as cv
   USING (climate_code)
+LEFT JOIN tax_names as tx
+  USING (sciname)
+```
+
+### access via R code chunk and RSQLite
+
+```{r, eval = TRUE}
+query <- 'SELECT * FROM range_shifts as rs
+          LEFT JOIN species_polygons as sp
+            USING (polygon_name, speriod, ecotype, sciname)
+          LEFT JOIN polygon_attrs as pa
+            USING (polygon_name, speriod, ecotype)
+          LEFT JOIN polygon_climate as pc
+            USING (polygon_name)
+          LEFT JOIN climate_variables as cv
+            USING (climate_code)
+          LEFT JOIN tax_names as tx
+            USING (sciname)'
+rshifts_df <- dbGetQuery(conn = mydb, statement = query)
 ```
 
 ```{r}
@@ -65,7 +90,8 @@ studyarea_sf <- read_sf(here('_raw_data/studyarea_shapefiles',
 names(studyarea_sf)
 
 ggplot(data = studyarea_sf) +
-  geom_sf(aes(color = paperid, fill = quality), alpha = .3)
+  geom_sf(aes(color = paperid, fill = quality), alpha = .3) +
+  theme_void()
 ```
 
 ## Examine patterns
@@ -73,6 +99,9 @@ ggplot(data = studyarea_sf) +
 ### categorical variables indicating type of shift
 
 ```{r}
+rshifts_df <- rshifts_df %>%
+  mutate(catchange = str_remove_all(catchange, 'itudinal|ease|ance|ational'))
+
 rshifts_df$tsupport %>% table()
 rshifts_df$psupport %>% table()
 
@@ -82,3 +111,83 @@ rshifts_df$param %>% table()
 rshifts_df$catchange %>% table()
 ```
 
+### Marine species
+
+```{r}
+marine_df <- rshifts_df %>%
+  filter(ecotype == 'marine') %>%
+  filter(!str_detect(climate_code, 'A|C')) %>%
+  select(-climate_code, -variable_description) %>%
+  distinct()
+
+ggplot(marine_df, aes(y = catchange, fill = tsupport)) +
+  geom_bar() +
+  theme_minimal() +
+  theme(axis.title.y = element_blank()) +
+  labs(title = 'Changes by category: supports CC shift?')
+
+marine_lat_df <- marine_df %>%
+  filter(str_detect(catchange, 'lat|long'))
+
+ggplot(marine_lat_df, aes(y = catchange, x = kmdec, color = tsupport)) +
+  geom_jitter(alpha = .2) +
+  theme_minimal() +
+  theme(axis.title.y = element_blank()) +
+  labs(title = 'latitude: km per decade by category') + 
+  facet_wrap(~ tax)
+
+marine_depth_df <- marine_df %>%
+  filter(str_detect(catchange, 'depth'))
+
+ggplot(marine_depth_df, aes(y = class, x = kmdec, color = tsupport)) +
+  geom_jitter(alpha = .2) +
+  theme_minimal() +
+  theme(axis.title.y = element_blank()) +
+  labs(title = 'depth: km per decade by category')
+```
+
+### Terrestrial species
+
+```{r}
+terr_df <- rshifts_df %>%
+  filter(ecotype != 'marine') %>%
+  filter(!str_detect(climate_code, 'C')) %>%
+  select(-climate_code, -variable_description) %>%
+  distinct()
+
+ggplot(terr_df, aes(y = catchange, fill = tsupport)) +
+  geom_bar() +
+  theme_minimal() +
+  theme(axis.title.y = element_blank()) +
+  labs(title = 'Changes by category: supports CC shift?')
+
+terr_lat_df <- terr_df %>%
+  filter(str_detect(catchange, 'lat|long'))
+
+ggplot(terr_lat_df, aes(y = catchange, x = kmdec, color = tsupport)) +
+  geom_jitter(alpha = .2) +
+  theme_minimal() +
+  theme(axis.title.y = element_blank()) +
+  labs(title = 'latitude: km per decade by category') +
+  facet_wrap(~ tax)
+
+terr_elev_df <- terr_df %>%
+  filter(str_detect(catchange, 'elev'))
+
+ggplot(terr_elev_df, 
+       aes(y = tax, x = kmdec, color = tsupport)) +
+  geom_jitter(alpha = 1) +
+  theme_minimal() +
+  theme(axis.title.y = element_blank()) +
+  labs(title = 'elev: km per decade by category')
+
+ggplot(terr_elev_df %>% filter(paperid != 613), 
+       aes(y = tax, x = kmdec, color = tsupport)) +
+  geom_jitter(alpha = .2) +
+  theme_minimal() +
+  theme(axis.title.y = element_blank()) +
+  labs(title = 'elev: km per decade by category')
+
+check <- terr_elev_df %>%
+  filter(tax == 'fish')
+```

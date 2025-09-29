@@ -33,42 +33,56 @@ dbDisconnect(mydb)
 
 ### Refs from Lenoir et al. 2020
 
-These are listed as just a list of refs and ID with no column names... the details need to be parsed out!
+These are listed as just a list of refs and ID with no column names... the details need to be parsed out!  I started to do it with text processing but ended up just dropping it into Gemini and asked it to parse for me.  That result is saved as `_raw_data/lenoir_refs.csv`.
 
 ```{r}
-refs_lenoir_raw <- read_csv(here('_raw_data/bioshifts/BioShifts/References.csv'), 
-                            col_names = FALSE) %>%
-  setNames(c('id', 'ref'))
+refs_lenoir <- read_csv(here('_raw_data/lenoir_refs.csv')) %>%
+  mutate(lenoir = TRUE)
 # head(refs_lenoir_raw)
-
-refs_lenoir <- refs_lenoir_raw %>%
-  mutate(lenoir = TRUE) %>%
-  ### first author ends in a comma
-  mutate(first_author = str_remove_all(ref, ',.+'),
-         first_author = str_remove(first_author, '^.+\\. '),
-         first_author = str_remove(first_author, ' et al.')) %>%
-  ### year as four digits in parens - extract and convert to int
-  mutate(year = str_extract(ref, '\\([0-9]{4}\\)') %>% 
-           str_extract('[0-9]{4}') %>% as.integer()) %>%
-  ### title as first text after a comma that is not a single cap/period
-  ### note the punctuation is inconsistent; just grab first 40ish chars?
-  mutate(short_title = str_extract(ref, ', [A-z][A-z ].+') %>%
-           str_remove('^, ') %>% str_sub(1, 40))
 ```
 
 ### try to match
 
 ```{r}
+author_clean <- function(a) {
+  a %>%
+    stringi::stri_trans_general('Latin-ASCII')
+}
+title_clean <- function(t) {
+  t_out <- str_to_lower(t) %>% 
+    str_replace_all('-', ' ') %>%
+    str_remove_all('[^a-z ]') %>%
+    str_squish() %>%
+    ### fix some typos
+    str_replace('chacteristics', 'characteristics') %>%
+    str_replace('euroatlantic', 'euro atlantic') %>%
+    str_replace('vegetation of mauna', 'vegetation on mauna') %>%
+    str_replace('the geographic range', 'the geographical range') %>%
+    str_replace('historical plants species', 'historical plant species') %>%
+    str_replace('heterogenous', 'heterogeneous') %>%
+    str_replace('upward shift in', 'upward shifts in') %>%
+    str_replace(' nd ', ' and ') %>%
+    str_replace('altitiude', 'altitude') %>%
+    ### truncate for ease of matching
+    str_sub(1, 40)
+}
 ref_intsect <- refs_rubenstein %>%
-  mutate(short_title = str_sub(title, 1, 40)) %>%
+  mutate(title = title_clean(title),
+         first_author = author_clean(first_author)) %>%
   select(-doi, -author, -journal, -paperid) %>%
-  full_join(refs_lenoir %>% select(-id, -ref)) %>%
+  full_join(refs_lenoir %>% 
+              mutate(title = title_clean(title),
+                     first_author = author_clean(first_author)),
+            by = c('title', 'first_author')) %>%
   mutate(src = case_when(is.na(lenoir) ~ 'rubenstein',
                          is.na(rubenstein) ~ 'lenoir',
                          TRUE ~ 'both'))
 
 table(ref_intsect$src)
 
+x <- ref_intsect %>%
+  filter(src != 'both') %>%
+  arrange(first_author)
 
+y <- x %>% janitor::get_dupes(first_author)
 ```
-

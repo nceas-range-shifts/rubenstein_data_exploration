@@ -9,3 +9,4 @@
 ### each user can expand the zips locally
 _raw_data/studyarea_shapefiles/*
 _raw_data/db_range_shifts/*
+_raw_data/bioshifts/*

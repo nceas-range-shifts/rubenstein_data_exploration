@@ -1,0 +1,74 @@
+---
+title: "refs check"
+format: 
+  html:
+    embed-resources: true
+---
+
+## Range shift reference lists
+
+Compare references from Lenoir et al. 2020 and Rubenstein et al. 2023.
+
+```{r}
+library(tidyverse)
+library(here)
+library(DBI)
+```
+
+### Refs from Rubenstein et al. 2023
+
+To match Lenoir et al. 2020, just grab first author's last name...
+
+```{r}
+db_file <- here('_raw_data/db_range_shifts.sqlite')
+mydb <- dbConnect(RSQLite::SQLite(), db_file)
+
+DBI::dbListTables(mydb)
+refs_rubenstein <- dbGetQuery(mydb, 'SELECT * FROM paper_id') %>%
+  mutate(first_author = str_remove(author, ' et al.*| and .+')) %>%
+  mutate(rubenstein = TRUE)
+
+dbDisconnect(mydb)
+```
+
+### Refs from Lenoir et al. 2020
+
+These are listed as just a list of refs and ID with no column names... the details need to be parsed out!
+
+```{r}
+refs_lenoir_raw <- read_csv(here('_raw_data/bioshifts/BioShifts/References.csv'), 
+                            col_names = FALSE) %>%
+  setNames(c('id', 'ref'))
+# head(refs_lenoir_raw)
+
+refs_lenoir <- refs_lenoir_raw %>%
+  mutate(lenoir = TRUE) %>%
+  ### first author ends in a comma
+  mutate(first_author = str_remove_all(ref, ',.+'),
+         first_author = str_remove(first_author, '^.+\\. '),
+         first_author = str_remove(first_author, ' et al.')) %>%
+  ### year as four digits in parens - extract and convert to int
+  mutate(year = str_extract(ref, '\\([0-9]{4}\\)') %>% 
+           str_extract('[0-9]{4}') %>% as.integer()) %>%
+  ### title as first text after a comma that is not a single cap/period
+  ### note the punctuation is inconsistent; just grab first 40ish chars?
+  mutate(short_title = str_extract(ref, ', [A-z][A-z ].+') %>%
+           str_remove('^, ') %>% str_sub(1, 40))
+```
+
+### try to match
+
+```{r}
+ref_intsect <- refs_rubenstein %>%
+  mutate(short_title = str_sub(title, 1, 40)) %>%
+  select(-doi, -author, -journal, -paperid) %>%
+  full_join(refs_lenoir %>% select(-id, -ref)) %>%
+  mutate(src = case_when(is.na(lenoir) ~ 'rubenstein',
+                         is.na(rubenstein) ~ 'lenoir',
+                         TRUE ~ 'both'))
+
+table(ref_intsect$src)
+
+
+```
+
